@@ -1,0 +1,75 @@
+name: CI - Model Training
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "MLProject/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install MLflow project dependencies
+        run: pip install mlflow==3.14.0 pandas==2.3.3 numpy==2.5.1 scikit-learn==1.9.0
+
+      - name: Run MLflow Project (retrain model)
+        working-directory: MLProject
+        run: mlflow run . --env-manager=local
+
+      - name: Get latest run ID
+        working-directory: MLProject
+        run: |
+          RUN_ID=$(python -c "
+          import mlflow
+          mlflow.set_tracking_uri('sqlite:///mlflow.db')
+          exp = mlflow.get_experiment_by_name('telco-churn-basic')
+          runs = mlflow.search_runs([exp.experiment_id], order_by=['start_time DESC'], max_results=1)
+          print(runs.iloc[0].run_id)
+          ")
+          echo "RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
+          echo "Latest run: $RUN_ID"
+
+      - name: Commit & push training artifacts (Skilled)
+        working-directory: MLProject
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add mlruns mlflow.db
+          git diff --cached --quiet || git commit -m "chore: update training artifacts [skip ci]"
+          git push
+
+      - name: Check Docker Hub secrets
+        id: dockerhub_check
+        run: |
+          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "has_secrets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_secrets=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Docker image with mlflow build-docker (Advance)
+        if: steps.dockerhub_check.outputs.has_secrets == 'true'
+        working-directory: MLProject
+        run: |
+          mlflow models build-docker \
+            --model-uri "runs:/${RUN_ID}/model" \
+            --name "${{ secrets.DOCKERHUB_USERNAME }}/telco-churn-model:latest"
+
+      - name: Push image to Docker Hub (Advance)
+        if: steps.dockerhub_check.outputs.has_secrets == 'true'
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+          docker push "${{ secrets.DOCKERHUB_USERNAME }}/telco-churn-model:latest"
