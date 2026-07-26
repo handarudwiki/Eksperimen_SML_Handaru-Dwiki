@@ -1,4 +1,4 @@
-"""Otomatisasi preprocessing dataset Telco Customer Churn.
+"""Otomatisasi preprocessing dataset Telco Customer Churn. 
 
 Konversi dari langkah-langkah manual pada Eksperimen_Handaru-Dwiki.ipynb
 (bagian 4. Data Preprocessing) menjadi fungsi yang bisa dijalankan otomatis,
